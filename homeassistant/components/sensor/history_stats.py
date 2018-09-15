@@ -10,7 +10,7 @@ import math
 
 import voluptuous as vol
 
-import homeassistant.components.history as history
+from homeassistant.components import history
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.dt as dt_util
 from homeassistant.components.sensor import PLATFORM_SCHEMA
@@ -44,20 +44,12 @@ UNITS = {
 }
 ICON = 'mdi:chart-line'
 
-ATTR_START = 'from'
-ATTR_END = 'to'
 ATTR_VALUE = 'value'
 
 
 def exactly_two_period_keys(conf):
     """Ensure exactly 2 of CONF_PERIOD_KEYS are provided."""
-    provided = 0
-
-    for param in CONF_PERIOD_KEYS:
-        if param in conf and conf[param] is not None:
-            provided += 1
-
-    if provided != 2:
+    if sum(param in conf for param in CONF_PERIOD_KEYS) != 2:
         raise vol.Invalid('You must provide exactly 2 of the following:'
                           ' start, end, duration')
     return conf
@@ -66,16 +58,16 @@ def exactly_two_period_keys(conf):
 PLATFORM_SCHEMA = vol.All(PLATFORM_SCHEMA.extend({
     vol.Required(CONF_ENTITY_ID): cv.entity_id,
     vol.Required(CONF_STATE): cv.string,
-    vol.Optional(CONF_START, default=None): cv.template,
-    vol.Optional(CONF_END, default=None): cv.template,
-    vol.Optional(CONF_DURATION, default=None): cv.time_period,
+    vol.Optional(CONF_START): cv.template,
+    vol.Optional(CONF_END): cv.template,
+    vol.Optional(CONF_DURATION): cv.time_period,
     vol.Optional(CONF_TYPE, default=CONF_TYPE_TIME): vol.In(CONF_TYPE_KEYS),
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
 }), exactly_two_period_keys)
 
 
 # noinspection PyUnusedLocal
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the History Stats sensor."""
     entity_id = config.get(CONF_ENTITY_ID)
     entity_state = config.get(CONF_STATE)
@@ -89,8 +81,8 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         if template is not None:
             template.hass = hass
 
-    add_devices([HistoryStatsSensor(hass, entity_id, entity_state, start, end,
-                                    duration, sensor_type, name)])
+    add_entities([HistoryStatsSensor(hass, entity_id, entity_state, start, end,
+                                     duration, sensor_type, name)])
 
     return True
 
@@ -114,8 +106,8 @@ class HistoryStatsSensor(Entity):
         self._unit_of_measurement = UNITS[sensor_type]
 
         self._period = (datetime.datetime.now(), datetime.datetime.now())
-        self.value = 0
-        self.count = 0
+        self.value = None
+        self.count = None
 
         def force_refresh(*args):
             """Force the component to refresh."""
@@ -135,6 +127,9 @@ class HistoryStatsSensor(Entity):
     @property
     def state(self):
         """Return the state of the sensor."""
+        if self.value is None or self.count is None:
+            return None
+
         if self._type == CONF_TYPE_TIME:
             return round(self.value, 2)
 
@@ -157,12 +152,12 @@ class HistoryStatsSensor(Entity):
     @property
     def device_state_attributes(self):
         """Return the state attributes of the sensor."""
-        start, end = self._period
+        if self.value is None:
+            return {}
+
         hsh = HistoryStatsHelper
         return {
             ATTR_VALUE: hsh.pretty_duration(self.value),
-            ATTR_START: start.strftime('%Y-%m-%d %H:%M:%S'),
-            ATTR_END: end.strftime('%Y-%m-%d %H:%M:%S'),
         }
 
     @property
@@ -172,13 +167,33 @@ class HistoryStatsSensor(Entity):
 
     def update(self):
         """Get the latest data and updates the states."""
+        # Get previous values of start and end
+        p_start, p_end = self._period
+
         # Parse templates
         self.update_period()
         start, end = self._period
 
-        # Convert to UTC
+        # Convert times to UTC
         start = dt_util.as_utc(start)
         end = dt_util.as_utc(end)
+        p_start = dt_util.as_utc(p_start)
+        p_end = dt_util.as_utc(p_end)
+        now = datetime.datetime.now()
+
+        # Compute integer timestamps
+        start_timestamp = math.floor(dt_util.as_timestamp(start))
+        end_timestamp = math.floor(dt_util.as_timestamp(end))
+        p_start_timestamp = math.floor(dt_util.as_timestamp(p_start))
+        p_end_timestamp = math.floor(dt_util.as_timestamp(p_end))
+        now_timestamp = math.floor(dt_util.as_timestamp(now))
+
+        # If period has not changed and current time after the period end...
+        if start_timestamp == p_start_timestamp and \
+            end_timestamp == p_end_timestamp and \
+                end_timestamp <= now_timestamp:
+            # Don't compute anything as the value cannot have changed
+            return
 
         # Get history between start and end
         history_list = history.state_changes_during_period(
@@ -191,7 +206,7 @@ class HistoryStatsSensor(Entity):
         last_state = history.get_state(self.hass, start, self._entity_id)
         last_state = (last_state is not None and
                       last_state == self._entity_state)
-        last_time = dt_util.as_timestamp(start)
+        last_time = start_timestamp
         elapsed = 0
         count = 0
 
@@ -210,8 +225,7 @@ class HistoryStatsSensor(Entity):
 
         # Count time elapsed between last history state and end of measure
         if last_state:
-            measure_end = min(dt_util.as_timestamp(end), dt_util.as_timestamp(
-                datetime.datetime.now()))
+            measure_end = min(end_timestamp, now_timestamp)
             elapsed += measure_end - last_time
 
         # Save value in hours
@@ -279,13 +293,10 @@ class HistoryStatsHelper:
         hours, seconds = divmod(seconds, 3600)
         minutes, seconds = divmod(seconds, 60)
         if days > 0:
-            return '%dd %dh %dm %ds' % (days, hours, minutes, seconds)
-        elif hours > 0:
-            return '%dh %dm %ds' % (hours, minutes, seconds)
-        elif minutes > 0:
-            return '%dm %ds' % (minutes, seconds)
-        else:
-            return '%ds' % (seconds,)
+            return '%dd %dh %dm' % (days, hours, minutes)
+        if hours > 0:
+            return '%dh %dm' % (hours, minutes)
+        return '%dm' % minutes
 
     @staticmethod
     def pretty_ratio(value, period):

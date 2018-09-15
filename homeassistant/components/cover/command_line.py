@@ -31,7 +31,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up cover controlled by shell commands."""
     devices = config.get(CONF_COVERS, {})
     covers = []
@@ -57,7 +57,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         _LOGGER.error("No covers added")
         return False
 
-    add_devices(covers)
+    add_entities(covers)
 
 
 class CommandCover(CoverDevice):
@@ -112,10 +112,7 @@ class CommandCover(CoverDevice):
     def is_closed(self):
         """Return if the cover is closed."""
         if self.current_cover_position is not None:
-            if self.current_cover_position > 0:
-                return False
-            else:
-                return True
+            return self.current_cover_position == 0
 
     @property
     def current_cover_position(self):

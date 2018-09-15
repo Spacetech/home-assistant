@@ -7,15 +7,15 @@ https://home-assistant.io/components/scene.lifx_cloud/
 import asyncio
 import logging
 
+import aiohttp
+from aiohttp.hdrs import AUTHORIZATION
+import async_timeout
 import voluptuous as vol
 
-import aiohttp
-import async_timeout
-
 from homeassistant.components.scene import Scene
-from homeassistant.const import (CONF_PLATFORM, CONF_TOKEN, CONF_TIMEOUT)
+from homeassistant.const import CONF_TOKEN, CONF_TIMEOUT, CONF_PLATFORM
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.aiohttp_client import (async_get_clientsession)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,15 +29,15 @@ PLATFORM_SCHEMA = vol.Schema({
 })
 
 
-# pylint: disable=unused-argument
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up the scenes stored in the LIFX Cloud."""
     token = config.get(CONF_TOKEN)
     timeout = config.get(CONF_TIMEOUT)
 
     headers = {
-        "Authorization": "Bearer %s" % token,
+        AUTHORIZATION: "Bearer {}".format(token),
     }
 
     url = LIFX_API_URL.format('scenes')
@@ -57,14 +57,14 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         devices = []
         for scene in data:
             devices.append(LifxCloudScene(hass, headers, timeout, scene))
-        async_add_devices(devices)
+        async_add_entities(devices)
         return True
-    elif status == 401:
+    if status == 401:
         _LOGGER.error("Unauthorized (bad token?) on %s", url)
         return False
-    else:
-        _LOGGER.error("HTTP error %d on %s", scenes_resp.status, url)
-        return False
+
+    _LOGGER.error("HTTP error %d on %s", scenes_resp.status, url)
+    return False
 
 
 class LifxCloudScene(Scene):

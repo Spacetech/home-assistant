@@ -14,18 +14,17 @@ from homeassistant.components.sensor import PLATFORM_SCHEMA
 from homeassistant.helpers.entity import Entity
 from homeassistant.const import (
     CONF_API_KEY, CONF_NAME, EVENT_HOMEASSISTANT_START, ATTR_LATITUDE,
-    ATTR_LONGITUDE)
+    ATTR_LONGITUDE, CONF_MODE)
 from homeassistant.util import Throttle
 import homeassistant.helpers.config_validation as cv
-import homeassistant.helpers.location as location
+from homeassistant.helpers import location
 import homeassistant.util.dt as dt_util
 
-REQUIREMENTS = ['googlemaps==2.4.6']
+REQUIREMENTS = ['googlemaps==2.5.1']
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_DESTINATION = 'destination'
-CONF_MODE = 'mode'
 CONF_OPTIONS = 'options'
 CONF_ORIGIN = 'origin'
 CONF_TRAVEL_MODE = 'travel_mode'
@@ -80,7 +79,7 @@ def convert_time_to_utc(timestr):
     return dt_util.as_timestamp(combined)
 
 
-def setup_platform(hass, config, add_devices_callback, discovery_info=None):
+def setup_platform(hass, config, add_entities_callback, discovery_info=None):
     """Set up the Google travel time platform."""
     def run_setup(event):
         """Delay the setup until Home Assistant is fully initialized.
@@ -109,11 +108,11 @@ def setup_platform(hass, config, add_devices_callback, discovery_info=None):
         origin = config.get(CONF_ORIGIN)
         destination = config.get(CONF_DESTINATION)
 
-        sensor = GoogleTravelTimeSensor(hass, name, api_key, origin,
-                                        destination, options)
+        sensor = GoogleTravelTimeSensor(
+            hass, name, api_key, origin, destination, options)
 
         if sensor.valid_api_connection:
-            add_devices_callback([sensor])
+            add_entities_callback([sensor])
 
     # Wait until start event is sent to load this component.
     hass.bus.listen_once(EVENT_HOMEASSISTANT_START, run_setup)

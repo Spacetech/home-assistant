@@ -8,20 +8,21 @@ import asyncio
 import logging
 
 from homeassistant.components.scene import Scene
-from homeassistant.components.wink import WinkDevice, DOMAIN
+from homeassistant.components.wink import DOMAIN, WinkDevice
 
-DEPENDENCIES = ['wink']
 _LOGGER = logging.getLogger(__name__)
 
+DEPENDENCIES = ['wink']
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Wink platform."""
     import pywink
 
     for scene in pywink.get_scenes():
         _id = scene.object_id() + scene.name()
         if _id not in hass.data[DOMAIN]['unique_ids']:
-            add_devices([WinkScene(scene, hass)])
+            add_entities([WinkScene(scene, hass)])
 
 
 class WinkScene(WinkDevice, Scene):
@@ -34,14 +35,9 @@ class WinkScene(WinkDevice, Scene):
 
     @asyncio.coroutine
     def async_added_to_hass(self):
-        """Callback when entity is added to hass."""
+        """Call when entity is added to hass."""
         self.hass.data[DOMAIN]['entities']['scene'].append(self)
 
-    @property
-    def is_on(self):
-        """Python-wink will always return False."""
-        return self.wink.state()
-
-    def activate(self, **kwargs):
+    def activate(self):
         """Activate the scene."""
         self.wink.activate()

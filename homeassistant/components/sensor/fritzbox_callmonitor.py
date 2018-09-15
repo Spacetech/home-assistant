@@ -21,7 +21,7 @@ from homeassistant.helpers.entity import Entity
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Throttle
 
-REQUIREMENTS = ['fritzconnection==0.6.3']
+REQUIREMENTS = ['fritzconnection==0.6.5']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up Fritz!Box call monitor sensor platform."""
     name = config.get(CONF_NAME)
     host = config.get(CONF_HOST)
@@ -70,15 +70,14 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         phonebook = FritzBoxPhonebook(
             host=host, port=port, username=username, password=password,
             phonebook_id=phonebook_id, prefixes=prefixes)
-    # pylint: disable=bare-except
-    except:
+    except:  # noqa: E722 pylint: disable=bare-except
         phonebook = None
         _LOGGER.warning("Phonebook with ID %s not found on Fritz!Box",
                         phonebook_id)
 
     sensor = FritzBoxCallSensor(name=name, phonebook=phonebook)
 
-    add_devices([sensor])
+    add_entities([sensor])
 
     monitor = FritzBoxCallMonitor(host=host, port=port, sensor=sensor)
     monitor.connect()
@@ -91,10 +90,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         _stop_listener
     )
 
-    if monitor.sock is None:
-        return False
-    else:
-        return True
+    return monitor.sock is not None
 
 
 class FritzBoxCallSensor(Entity):
@@ -118,10 +114,7 @@ class FritzBoxCallSensor(Entity):
     @property
     def should_poll(self):
         """Only poll to update phonebook, if defined."""
-        if self.phonebook is None:
-            return False
-        else:
-            return True
+        return self.phonebook is not None
 
     @property
     def state(self):
@@ -142,8 +135,7 @@ class FritzBoxCallSensor(Entity):
         """Return a name for a given phone number."""
         if self.phonebook is None:
             return 'unknown'
-        else:
-            return self.phonebook.get_name(number)
+        return self.phonebook.get_name(number)
 
     def update(self):
         """Update the phonebook if it is defined."""
@@ -151,7 +143,7 @@ class FritzBoxCallSensor(Entity):
             self.phonebook.update_phonebook()
 
 
-class FritzBoxCallMonitor(object):
+class FritzBoxCallMonitor:
     """Event listener to monitor calls on the Fritz!Box."""
 
     def __init__(self, host, port, sensor):
@@ -195,7 +187,6 @@ class FritzBoxCallMonitor(object):
                 line = response.split("\n", 1)[0]
                 self._parse(line)
                 time.sleep(1)
-        return
 
     def _parse(self, line):
         """Parse the call information and set the sensor states."""
@@ -223,7 +214,7 @@ class FritzBoxCallMonitor(object):
             self._sensor.set_attributes(att)
         elif line[1] == "CONNECT":
             self._sensor.set_state(VALUE_CONNECT)
-            att = {"with": line[4], "device": [3], "accepted": isotime}
+            att = {"with": line[4], "device": line[3], "accepted": isotime}
             att["with_name"] = self._sensor.number_to_name(att["with"])
             self._sensor.set_attributes(att)
         elif line[1] == "DISCONNECT":
@@ -233,7 +224,7 @@ class FritzBoxCallMonitor(object):
         self._sensor.schedule_update_ha_state()
 
 
-class FritzBoxPhonebook(object):
+class FritzBoxPhonebook:
     """This connects to a FritzBox router and downloads its phone book."""
 
     def __init__(self, host, port, username, password,

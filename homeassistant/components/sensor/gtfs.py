@@ -16,15 +16,14 @@ from homeassistant.const import CONF_NAME
 from homeassistant.helpers.entity import Entity
 import homeassistant.helpers.config_validation as cv
 
-REQUIREMENTS = ["https://github.com/robbiet480/pygtfs/archive/"
-                "00546724e4bbcb3053110d844ca44e2246267dd8.zip#"
-                "pygtfs==0.1.3"]
+REQUIREMENTS = ['pygtfs-homeassistant==0.1.3.dev0']
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_DATA = 'data'
 CONF_DESTINATION = 'destination'
 CONF_ORIGIN = 'origin'
+CONF_OFFSET = 'offset'
 
 DEFAULT_NAME = 'GTFS Sensor'
 DEFAULT_PATH = 'gtfs'
@@ -38,17 +37,19 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_DESTINATION): cv.string,
     vol.Required(CONF_DATA): cv.string,
     vol.Optional(CONF_NAME): cv.string,
+    vol.Optional(CONF_OFFSET, default=0): cv.time_period,
 })
 
 
-def get_next_departure(sched, start_station_id, end_station_id):
+def get_next_departure(sched, start_station_id, end_station_id, offset):
     """Get the next departure for the given schedule."""
     origin_station = sched.stops_by_id(start_station_id)[0]
     destination_station = sched.stops_by_id(end_station_id)[0]
 
-    now = datetime.datetime.now()
+    now = datetime.datetime.now() + offset
     day_name = now.strftime('%A').lower()
     now_str = now.strftime('%H:%M:%S')
+    today = now.strftime('%Y-%m-%d')
 
     from sqlalchemy.sql import text
 
@@ -86,11 +87,14 @@ def get_next_departure(sched, start_station_id, end_station_id):
     AND start_station.stop_id = :origin_station_id
                AND end_station.stop_id = :end_station_id
     AND origin_stop_time.stop_sequence < destination_stop_time.stop_sequence
+    AND calendar.start_date <= :today
+    AND calendar.end_date >= :today
     ORDER BY origin_stop_time.departure_time LIMIT 1;
     """.format(day_name=day_name))
     result = sched.engine.execute(sql_query, now_str=now_str,
                                   origin_station_id=origin_station.id,
-                                  end_station_id=destination_station.id)
+                                  end_station_id=destination_station.id,
+                                  today=today)
     item = {}
     for row in result:
         item = row
@@ -98,7 +102,6 @@ def get_next_departure(sched, start_station_id, end_station_id):
     if item == {}:
         return None
 
-    today = datetime.datetime.today().strftime('%Y-%m-%d')
     departure_time_string = '{} {}'.format(today, item[2])
     arrival_time_string = '{} {}'.format(today, item[3])
     departure_time = datetime.datetime.strptime(departure_time_string,
@@ -148,13 +151,14 @@ def get_next_departure(sched, start_station_id, end_station_id):
     }
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the GTFS sensor."""
     gtfs_dir = hass.config.path(DEFAULT_PATH)
     data = config.get(CONF_DATA)
     origin = config.get(CONF_ORIGIN)
     destination = config.get(CONF_DESTINATION)
     name = config.get(CONF_NAME)
+    offset = config.get(CONF_OFFSET)
 
     if not os.path.exists(gtfs_dir):
         os.makedirs(gtfs_dir)
@@ -172,20 +176,22 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     gtfs = pygtfs.Schedule(joined_path)
 
     # pylint: disable=no-member
-    if len(gtfs.feeds) < 1:
+    if not gtfs.feeds:
         pygtfs.append_feed(gtfs, os.path.join(gtfs_dir, data))
 
-    add_devices([GTFSDepartureSensor(gtfs, name, origin, destination)])
+    add_entities([
+        GTFSDepartureSensor(gtfs, name, origin, destination, offset)])
 
 
 class GTFSDepartureSensor(Entity):
     """Implementation of an GTFS departures sensor."""
 
-    def __init__(self, pygtfs, name, origin, destination):
+    def __init__(self, pygtfs, name, origin, destination, offset):
         """Initialize the sensor."""
         self._pygtfs = pygtfs
         self.origin = origin
         self.destination = destination
+        self._offset = offset
         self._custom_name = name
         self._name = ''
         self._unit_of_measurement = 'min'
@@ -223,7 +229,7 @@ class GTFSDepartureSensor(Entity):
         """Get the latest data from GTFS and update the states."""
         with self.lock:
             self._departure = get_next_departure(
-                self._pygtfs, self.origin, self.destination)
+                self._pygtfs, self.origin, self.destination, self._offset)
             if not self._departure:
                 self._state = 0
                 self._attributes = {'Info': 'No more departures today'}
@@ -249,6 +255,7 @@ class GTFSDepartureSensor(Entity):
 
             # Build attributes
             self._attributes = {}
+            self._attributes['offset'] = self._offset.seconds / 60
 
             def dict_for_table(resource):
                 """Return a dict for the SQLAlchemy resource given."""

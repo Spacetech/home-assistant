@@ -1,13 +1,14 @@
 """
-Support for Homematic lighs.
+Support for Homematic lights.
 
 For more details about this platform, please refer to the documentation at
 https://home-assistant.io/components/light.homematic/
 """
 import logging
+
+from homeassistant.components.homematic import ATTR_DISCOVER_DEVICES, HMDevice
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS, SUPPORT_BRIGHTNESS, Light)
-from homeassistant.components.homematic import HMDevice, ATTR_DISCOVER_DEVICES
 from homeassistant.const import STATE_UNKNOWN
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,18 +18,17 @@ DEPENDENCIES = ['homematic']
 SUPPORT_HOMEMATIC = SUPPORT_BRIGHTNESS
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Homematic light platform."""
     if discovery_info is None:
         return
 
     devices = []
-    for config in discovery_info[ATTR_DISCOVER_DEVICES]:
-        new_device = HMLight(hass, config)
-        new_device.link_homematic()
+    for conf in discovery_info[ATTR_DISCOVER_DEVICES]:
+        new_device = HMLight(conf)
         devices.append(new_device)
 
-    add_devices(devices)
+    add_entities(devices)
 
 
 class HMLight(HMDevice, Light):
@@ -38,10 +38,9 @@ class HMLight(HMDevice, Light):
     def brightness(self):
         """Return the brightness of this light between 0..255."""
         # Is dimmer?
-        if self._state is "LEVEL":
+        if self._state == "LEVEL":
             return int(self._hm_get_state() * 255)
-        else:
-            return None
+        return None
 
     @property
     def is_on(self):
@@ -58,7 +57,7 @@ class HMLight(HMDevice, Light):
 
     def turn_on(self, **kwargs):
         """Turn the light on."""
-        if ATTR_BRIGHTNESS in kwargs and self._state is "LEVEL":
+        if ATTR_BRIGHTNESS in kwargs and self._state == "LEVEL":
             percent_bright = float(kwargs[ATTR_BRIGHTNESS]) / 255
             self._hmdevice.set_level(percent_bright, self._channel)
         else:

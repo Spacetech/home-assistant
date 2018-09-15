@@ -16,7 +16,7 @@ class TestStatsd(unittest.TestCase):
     """Test the StatsD component."""
 
     def setUp(self):  # pylint: disable=invalid-name
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
 
     def tearDown(self):  # pylint: disable=invalid-name
@@ -86,6 +86,7 @@ class TestStatsd(unittest.TestCase):
         config = {
             'statsd': {
                 'host': 'host',
+                'value_mapping': {'custom': 3}
             }
         }
 
@@ -98,6 +99,7 @@ class TestStatsd(unittest.TestCase):
 
         valid = {'1': 1,
                  '1.0': 1.0,
+                 'custom': 3,
                  STATE_ON: 1,
                  STATE_OFF: 0}
         for in_, out in valid.items():

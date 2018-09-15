@@ -1,25 +1,29 @@
 """Test to verify that Home Assistant core works."""
 # pylint: disable=protected-access
 import asyncio
+import logging
+import os
 import unittest
 from unittest.mock import patch, MagicMock, sentinel
 from datetime import datetime, timedelta
+from tempfile import TemporaryDirectory
 
-import logging
 import pytz
 import pytest
 
 import homeassistant.core as ha
-from homeassistant.exceptions import InvalidEntityFormatError
-from homeassistant.util.async import run_coroutine_threadsafe
+from homeassistant.exceptions import (InvalidEntityFormatError,
+                                      InvalidStateError)
+from homeassistant.util.async_ import run_coroutine_threadsafe
 import homeassistant.util.dt as dt_util
 from homeassistant.util.unit_system import (METRIC_SYSTEM)
 from homeassistant.const import (
     __version__, EVENT_STATE_CHANGED, ATTR_FRIENDLY_NAME, CONF_UNIT_SYSTEM,
     ATTR_NOW, EVENT_TIME_CHANGED, EVENT_HOMEASSISTANT_STOP,
-    EVENT_HOMEASSISTANT_CLOSE, EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED)
+    EVENT_HOMEASSISTANT_CLOSE, EVENT_SERVICE_REGISTERED, EVENT_SERVICE_REMOVED,
+    EVENT_SERVICE_EXECUTED)
 
-from tests.common import get_test_home_assistant
+from tests.common import get_test_home_assistant, async_mock_service
 
 PST = pytz.timezone('America/Los_Angeles')
 
@@ -62,6 +66,18 @@ def test_async_add_job_add_threaded_job_to_pool(mock_iscoro):
     assert len(hass.loop.call_soon.mock_calls) == 0
     assert len(hass.loop.create_task.mock_calls) == 0
     assert len(hass.loop.run_in_executor.mock_calls) == 1
+
+
+@patch('asyncio.iscoroutine', return_value=True)
+def test_async_create_task_schedule_coroutine(mock_iscoro):
+    """Test that we schedule coroutines and add jobs to the job pool."""
+    hass = MagicMock()
+    job = MagicMock()
+
+    ha.HomeAssistant.async_create_task(hass, job)
+    assert len(hass.loop.call_soon.mock_calls) == 0
+    assert len(hass.loop.create_task.mock_calls) == 1
+    assert len(hass.add_job.mock_calls) == 0
 
 
 def test_async_run_job_calls_callback():
@@ -115,7 +131,7 @@ class TestHomeAssistant(unittest.TestCase):
 
     # pylint: disable=invalid-name
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
 
     # pylint: disable=invalid-name
@@ -132,7 +148,7 @@ class TestHomeAssistant(unittest.TestCase):
             """Test Coro."""
             call_count.append('call')
 
-        for i in range(3):
+        for _ in range(3):
             self.hass.add_job(test_coro())
 
         run_coroutine_threadsafe(
@@ -152,7 +168,7 @@ class TestHomeAssistant(unittest.TestCase):
             """Test Coro."""
             call_count.append('call')
 
-        for i in range(2):
+        for _ in range(2):
             self.hass.add_job(test_coro())
 
         @asyncio.coroutine
@@ -169,7 +185,7 @@ class TestHomeAssistant(unittest.TestCase):
         assert len(call_count) == 2
 
     def test_async_add_job_pending_tasks_executor(self):
-        """Run a executor in pending tasks."""
+        """Run an executor in pending tasks."""
         call_count = []
 
         def test_executor():
@@ -182,7 +198,7 @@ class TestHomeAssistant(unittest.TestCase):
             yield from asyncio.sleep(0, loop=self.hass.loop)
             yield from asyncio.sleep(0, loop=self.hass.loop)
 
-        for i in range(2):
+        for _ in range(2):
             self.hass.add_job(test_executor)
 
         run_coroutine_threadsafe(
@@ -207,7 +223,7 @@ class TestHomeAssistant(unittest.TestCase):
             yield from asyncio.sleep(0, loop=self.hass.loop)
             yield from asyncio.sleep(0, loop=self.hass.loop)
 
-        for i in range(2):
+        for _ in range(2):
             self.hass.add_job(test_callback)
 
         run_coroutine_threadsafe(
@@ -231,8 +247,9 @@ class TestEvent(unittest.TestCase):
         """Test events."""
         now = dt_util.utcnow()
         data = {'some': 'attr'}
+        context = ha.Context()
         event1, event2 = [
-            ha.Event('some_type', data, time_fired=now)
+            ha.Event('some_type', data, time_fired=now, context=context)
             for _ in range(2)
         ]
 
@@ -262,6 +279,10 @@ class TestEvent(unittest.TestCase):
             'data': data,
             'origin': 'LOCAL',
             'time_fired': now,
+            'context': {
+                'id': event.context.id,
+                'user_id': event.context.user_id,
+            },
         }
         self.assertEqual(expected, event.as_dict())
 
@@ -271,7 +292,7 @@ class TestEventBus(unittest.TestCase):
 
     # pylint: disable=invalid-name
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
         self.bus = self.hass.bus
 
@@ -372,7 +393,7 @@ class TestEventBus(unittest.TestCase):
         self.assertEqual(1, len(runs))
 
     def test_thread_event_listener(self):
-        """Test a  event listener listeners."""
+        """Test thread event listener."""
         thread_calls = []
 
         def thread_listener(event):
@@ -384,7 +405,7 @@ class TestEventBus(unittest.TestCase):
         assert len(thread_calls) == 1
 
     def test_callback_event_listener(self):
-        """Test a  event listener listeners."""
+        """Test callback event listener."""
         callback_calls = []
 
         @ha.callback
@@ -397,7 +418,7 @@ class TestEventBus(unittest.TestCase):
         assert len(callback_calls) == 1
 
     def test_coroutine_event_listener(self):
-        """Test a  event listener listeners."""
+        """Test coroutine event listener."""
         coroutine_calls = []
 
         @asyncio.coroutine
@@ -418,6 +439,10 @@ class TestState(unittest.TestCase):
         self.assertRaises(
             InvalidEntityFormatError, ha.State,
             'invalid_entity_format', 'test_state')
+
+        self.assertRaises(
+            InvalidStateError, ha.State,
+            'domain.long_state', 't' * 256)
 
     def test_domain(self):
         """Test domain."""
@@ -471,7 +496,7 @@ class TestStateMachine(unittest.TestCase):
 
     # pylint: disable=invalid-name
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
         self.states = self.hass.states
         self.states.set("light.Bowl", "on")
@@ -487,18 +512,6 @@ class TestStateMachine(unittest.TestCase):
         self.assertTrue(self.states.is_state('light.Bowl', 'on'))
         self.assertFalse(self.states.is_state('light.Bowl', 'off'))
         self.assertFalse(self.states.is_state('light.Non_existing', 'on'))
-
-    def test_is_state_attr(self):
-        """Test is_state_attr method."""
-        self.states.set("light.Bowl", "on", {"brightness": 100})
-        self.assertTrue(
-            self.states.is_state_attr('light.Bowl', 'brightness', 100))
-        self.assertFalse(
-            self.states.is_state_attr('light.Bowl', 'friendly_name', 200))
-        self.assertFalse(
-            self.states.is_state_attr('light.Bowl', 'friendly_name', 'Bowl'))
-        self.assertFalse(
-            self.states.is_state_attr('light.Non_existing', 'brightness', 100))
 
     def test_entity_ids(self):
         """Test get_entity_ids method."""
@@ -591,18 +604,16 @@ class TestStateMachine(unittest.TestCase):
         self.assertEqual(1, len(events))
 
 
-class TestServiceCall(unittest.TestCase):
-    """Test ServiceCall class."""
+def test_service_call_repr():
+    """Test ServiceCall repr."""
+    call = ha.ServiceCall('homeassistant', 'start')
+    assert str(call) == \
+        "<ServiceCall homeassistant.start (c:{})>".format(call.context.id)
 
-    def test_repr(self):
-        """Test repr method."""
-        self.assertEqual(
-            "<ServiceCall homeassistant.start>",
-            str(ha.ServiceCall('homeassistant', 'start')))
-
-        self.assertEqual(
-            "<ServiceCall homeassistant.start: fast=yes>",
-            str(ha.ServiceCall('homeassistant', 'start', {"fast": "yes"})))
+    call2 = ha.ServiceCall('homeassistant', 'start', {'fast': 'yes'})
+    assert str(call2) == \
+        "<ServiceCall homeassistant.start (c:{}): fast=yes>".format(
+            call2.context.id)
 
 
 class TestServiceRegistry(unittest.TestCase):
@@ -610,7 +621,7 @@ class TestServiceRegistry(unittest.TestCase):
 
     # pylint: disable=invalid-name
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
         self.services = self.hass.services
 
@@ -645,10 +656,7 @@ class TestServiceRegistry(unittest.TestCase):
 
     def test_services(self):
         """Test services."""
-        expected = {
-            'test_domain': {'test_service': {'description': '', 'fields': {}}}
-        }
-        self.assertEqual(expected, self.services.services)
+        assert len(self.services.services) == 1
 
     def test_call_with_blocking_done_in_time(self):
         """Test call with blocking."""
@@ -768,7 +776,7 @@ class TestConfig(unittest.TestCase):
 
     # pylint: disable=invalid-name
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.config = ha.Config()
         self.assertIsNone(self.config.config_dir)
 
@@ -796,10 +804,47 @@ class TestConfig(unittest.TestCase):
             'time_zone': 'UTC',
             'components': set(),
             'config_dir': '/tmp/ha-config',
+            'whitelist_external_dirs': set(),
             'version': __version__,
         }
 
         self.assertEqual(expected, self.config.as_dict())
+
+    def test_is_allowed_path(self):
+        """Test is_allowed_path method."""
+        with TemporaryDirectory() as tmp_dir:
+            # The created dir is in /tmp. This is a symlink on OS X
+            # causing this test to fail unless we resolve path first.
+            self.config.whitelist_external_dirs = set((
+                os.path.realpath(tmp_dir),
+            ))
+
+            test_file = os.path.join(tmp_dir, "test.jpg")
+            with open(test_file, "w") as tmp_file:
+                tmp_file.write("test")
+
+            valid = [
+                test_file,
+                tmp_dir,
+                os.path.join(tmp_dir, 'notfound321')
+            ]
+            for path in valid:
+                assert self.config.is_allowed_path(path)
+
+            self.config.whitelist_external_dirs = set(('/home', '/var'))
+
+            unvalid = [
+                "/hass/config/secure",
+                "/etc/passwd",
+                "/root/secure_file",
+                "/var/../etc/passwd",
+                test_file,
+            ]
+            for path in unvalid:
+                assert not self.config.is_allowed_path(path)
+
+            with self.assertRaises(AssertionError):
+                self.config.is_allowed_path(None)
 
 
 @patch('homeassistant.core.monotonic')
@@ -817,21 +862,29 @@ def test_create_timer(mock_monotonic, loop):
 
     with patch.object(ha, 'callback', mock_callback), \
             patch('homeassistant.core.dt_util.utcnow',
-                  return_value=sentinel.mock_date):
+                  return_value=datetime(2018, 12, 31, 3, 4, 5, 333333)):
         ha._async_create_timer(hass)
+
+    assert len(hass.loop.call_later.mock_calls) == 1
+    slp_seconds, action = hass.loop.call_later.mock_calls[0][1]
+    assert abs(slp_seconds - 0.666667) < 0.001
+
+    with patch('homeassistant.core.dt_util.utcnow',
+               return_value=sentinel.mock_date):
+        action()
 
         assert len(funcs) == 2
         fire_time_event, stop_timer = funcs
 
     assert len(hass.bus.async_listen_once.mock_calls) == 1
     assert len(hass.bus.async_fire.mock_calls) == 1
-    assert len(hass.loop.call_later.mock_calls) == 1
+    assert len(hass.loop.call_later.mock_calls) == 2
 
     event_type, callback = hass.bus.async_listen_once.mock_calls[0][1]
     assert event_type == EVENT_HOMEASSISTANT_STOP
     assert callback is stop_timer
 
-    slp_seconds, callback, nxt = hass.loop.call_later.mock_calls[0][1]
+    slp_seconds, callback, nxt = hass.loop.call_later.mock_calls[1][1]
     assert abs(slp_seconds - 0.9) < 0.001
     assert callback is fire_time_event
     assert abs(nxt - 11.2) < 0.001
@@ -856,15 +909,21 @@ def test_timer_out_of_sync(mock_monotonic, loop):
 
     with patch.object(ha, 'callback', mock_callback), \
             patch('homeassistant.core.dt_util.utcnow',
-                  return_value=sentinel.mock_date):
+                  return_value=datetime(2018, 12, 31, 3, 4, 5, 333333)):
         ha._async_create_timer(hass)
+
+    _, action = hass.loop.call_later.mock_calls[0][1]
+
+    with patch('homeassistant.core.dt_util.utcnow',
+               return_value=sentinel.mock_date):
+        action()
 
         assert len(funcs) == 2
         fire_time_event, stop_timer = funcs
 
-    assert len(hass.loop.call_later.mock_calls) == 1
+    assert len(hass.loop.call_later.mock_calls) == 2
 
-    slp_seconds, callback, nxt = hass.loop.call_later.mock_calls[0][1]
+    slp_seconds, callback, nxt = hass.loop.call_later.mock_calls[1][1]
     assert slp_seconds == 1
     assert callback is fire_time_event
     assert abs(nxt - 12.3) < 0.001
@@ -925,3 +984,27 @@ def test_track_task_functions(loop):
         assert hass._track_task
     finally:
         yield from hass.async_stop()
+
+
+async def test_service_executed_with_subservices(hass):
+    """Test we block correctly till all services done."""
+    calls = async_mock_service(hass, 'test', 'inner')
+
+    async def handle_outer(call):
+        """Handle outer service call."""
+        calls.append(call)
+        call1 = hass.services.async_call('test', 'inner', blocking=True,
+                                         context=call.context)
+        call2 = hass.services.async_call('test', 'inner', blocking=True,
+                                         context=call.context)
+        await asyncio.wait([call1, call2])
+        calls.append(call)
+
+    hass.services.async_register('test', 'outer', handle_outer)
+
+    await hass.services.async_call('test', 'outer', blocking=True)
+
+    assert len(calls) == 4
+    assert [call.service for call in calls] == [
+        'outer', 'inner', 'inner', 'outer']
+    assert len(hass.bus.async_listeners().get(EVENT_SERVICE_EXECUTED, [])) == 0

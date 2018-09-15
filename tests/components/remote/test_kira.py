@@ -24,7 +24,7 @@ class TestKiraSensor(unittest.TestCase):
     # pylint: disable=invalid-name
     DEVICES = []
 
-    def add_devices(self, devices):
+    def add_entities(self, devices):
         """Mock add devices."""
         for device in devices:
             self.DEVICES.append(device)
@@ -42,16 +42,16 @@ class TestKiraSensor(unittest.TestCase):
 
     def test_service_call(self):
         """Test Kira's ability to send commands."""
-        kira.setup_platform(self.hass, TEST_CONFIG, self.add_devices,
+        kira.setup_platform(self.hass, TEST_CONFIG, self.add_entities,
                             DISCOVERY_INFO)
         assert len(self.DEVICES) == 1
         remote = self.DEVICES[0]
 
         assert remote.name == 'kira'
 
-        command = "FAKE_COMMAND"
+        command = ["FAKE_COMMAND"]
         device = "FAKE_DEVICE"
-        commandTuple = (command, device)
+        commandTuple = (command[0], device)
         remote.send_command(device=device, command=command)
 
         self.mock_kira.sendCode.assert_called_with(commandTuple)

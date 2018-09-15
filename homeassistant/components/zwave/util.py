@@ -1,5 +1,8 @@
 """Zwave util methods."""
+import asyncio
 import logging
+
+import homeassistant.util.dt as dt_util
 
 from . import const
 
@@ -43,21 +46,6 @@ def check_value_schema(value, schema):
         _LOGGER.debug("value.genre %s not in genre %s",
                       value.genre, schema[const.DISC_GENRE])
         return False
-    if (const.DISC_READONLY in schema and
-            value.is_read_only is not schema[const.DISC_READONLY]):
-        _LOGGER.debug("value.is_read_only %s not %s",
-                      value.is_read_only, schema[const.DISC_READONLY])
-        return False
-    if (const.DISC_WRITEONLY in schema and
-            value.is_write_only is not schema[const.DISC_WRITEONLY]):
-        _LOGGER.debug("value.is_write_only %s not %s",
-                      value.is_write_only, schema[const.DISC_WRITEONLY])
-        return False
-    if (const.DISC_LABEL in schema and
-            value.label not in schema[const.DISC_LABEL]):
-        _LOGGER.debug("value.label %s not in label %s",
-                      value.label, schema[const.DISC_LABEL])
-        return False
     if (const.DISC_INDEX in schema and
             value.index not in schema[const.DISC_INDEX]):
         _LOGGER.debug("value.index %s not in index %s",
@@ -68,10 +56,39 @@ def check_value_schema(value, schema):
         _LOGGER.debug("value.instance %s not in instance %s",
                       value.instance, schema[const.DISC_INSTANCE])
         return False
+    if const.DISC_SCHEMAS in schema:
+        found = False
+        for schema_item in schema[const.DISC_SCHEMAS]:
+            found = found or check_value_schema(value, schema_item)
+        if not found:
+            return False
+
     return True
 
 
 def node_name(node):
     """Return the name of the node."""
-    return node.name or '{} {}'.format(
-        node.manufacturer_name, node.product_name)
+    if is_node_parsed(node):
+        return node.name or '{} {}'.format(
+            node.manufacturer_name, node.product_name)
+    return 'Unknown Node {}'.format(node.node_id)
+
+
+async def check_has_unique_id(entity, ready_callback, timeout_callback, loop):
+    """Wait for entity to have unique_id."""
+    start_time = dt_util.utcnow()
+    while True:
+        waited = int((dt_util.utcnow()-start_time).total_seconds())
+        if entity.unique_id:
+            ready_callback(waited)
+            return
+        if waited >= const.NODE_READY_WAIT_SECS:
+            # Wait up to NODE_READY_WAIT_SECS seconds for unique_id to appear.
+            timeout_callback(waited)
+            return
+        await asyncio.sleep(1, loop=loop)
+
+
+def is_node_parsed(node):
+    """Check whether the node has been parsed or still waiting to be parsed."""
+    return bool((node.manufacturer_name and node.product_name) or node.name)

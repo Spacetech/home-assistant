@@ -2,12 +2,14 @@
 import logging
 
 from homeassistant.core import callback
-from homeassistant.const import ATTR_BATTERY_LEVEL, ATTR_WAKEUP
+from homeassistant.const import ATTR_BATTERY_LEVEL, ATTR_WAKEUP, ATTR_ENTITY_ID
 from homeassistant.helpers.entity import Entity
-from homeassistant.util import slugify
 
-from .const import ATTR_NODE_ID, DOMAIN, COMMAND_CLASS_WAKE_UP
-from .util import node_name
+from .const import (
+    ATTR_NODE_ID, COMMAND_CLASS_WAKE_UP, ATTR_SCENE_ID, ATTR_SCENE_DATA,
+    ATTR_BASIC_LEVEL, EVENT_NODE_EVENT, EVENT_SCENE_ACTIVATED,
+    COMMAND_CLASS_CENTRAL_SCENE)
+from .util import node_name, is_node_parsed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ ATTR_READY = 'is_ready'
 ATTR_FAILED = 'is_failed'
 ATTR_PRODUCT_NAME = 'product_name'
 ATTR_MANUFACTURER_NAME = 'manufacturer_name'
+ATTR_NODE_NAME = 'node_name'
 
 STAGE_COMPLETE = 'Complete'
 
@@ -62,10 +65,14 @@ class ZWaveBaseEntity(Entity):
         self._update_scheduled = True
         self.hass.loop.call_later(0.1, do_update)
 
-
-def sub_status(status, stage):
-    """Format sub-status."""
-    return '{} ({})'.format(status, stage) if stage else status
+    def try_remove_and_add(self):
+        """Remove this entity and add it back."""
+        async def _async_remove_and_add():
+            await self.async_remove()
+            self.entity_id = None
+            await self.platform.async_add_entities([self])
+        if self.hass and self.platform:
+            self.hass.add_job(_async_remove_and_add)
 
 
 class ZWaveNodeEntity(ZWaveBaseEntity):
@@ -83,8 +90,7 @@ class ZWaveNodeEntity(ZWaveBaseEntity):
         self._name = node_name(self.node)
         self._product_name = node.product_name
         self._manufacturer_name = node.manufacturer_name
-        self.entity_id = "{}.{}_{}".format(
-            DOMAIN, slugify(self._name), self.node_id)
+        self._unique_id = self._compute_unique_id()
         self._attributes = {}
         self.wakeup_interval = None
         self.location = None
@@ -94,14 +100,29 @@ class ZWaveNodeEntity(ZWaveBaseEntity):
         dispatcher.connect(self.network_node_changed, ZWaveNetwork.SIGNAL_NODE)
         dispatcher.connect(
             self.network_node_changed, ZWaveNetwork.SIGNAL_NOTIFICATION)
+        dispatcher.connect(
+            self.network_node_event, ZWaveNetwork.SIGNAL_NODE_EVENT)
+        dispatcher.connect(
+            self.network_scene_activated, ZWaveNetwork.SIGNAL_SCENE_EVENT)
 
-    def network_node_changed(self, node=None, args=None):
+    @property
+    def unique_id(self):
+        """Return unique ID of Z-wave node."""
+        return self._unique_id
+
+    def network_node_changed(self, node=None, value=None, args=None):
         """Handle a changed node on the network."""
         if node and node.node_id != self.node_id:
             return
         if args is not None and 'nodeId' in args and \
                 args['nodeId'] != self.node_id:
             return
+
+        # Process central scene activation
+        if (value is not None and
+                value.command_class == COMMAND_CLASS_CENTRAL_SCENE):
+            self.central_scene_activated(value.index, value.data)
+
         self.node_changed()
 
     def get_node_statistics(self):
@@ -123,32 +144,88 @@ class ZWaveNodeEntity(ZWaveBaseEntity):
 
         if self.node.can_wake_up():
             for value in self.node.get_values(COMMAND_CLASS_WAKE_UP).values():
+                if value.index != 0:
+                    continue
+
                 self.wakeup_interval = value.data
                 break
         else:
             self.wakeup_interval = None
 
         self.battery_level = self.node.get_battery_level()
+        self._product_name = self.node.product_name
+        self._manufacturer_name = self.node.manufacturer_name
+        self._name = node_name(self.node)
         self._attributes = attributes
 
+        if not self._unique_id:
+            self._unique_id = self._compute_unique_id()
+            if self._unique_id:
+                # Node info parsed. Remove and re-add
+                self.try_remove_and_add()
+
         self.maybe_schedule_update()
+
+    def network_node_event(self, node, value):
+        """Handle a node activated event on the network."""
+        if node.node_id == self.node.node_id:
+            self.node_event(value)
+
+    def node_event(self, value):
+        """Handle a node activated event for this node."""
+        if self.hass is None:
+            return
+
+        self.hass.bus.fire(EVENT_NODE_EVENT, {
+            ATTR_ENTITY_ID: self.entity_id,
+            ATTR_NODE_ID: self.node.node_id,
+            ATTR_BASIC_LEVEL: value
+        })
+
+    def network_scene_activated(self, node, scene_id):
+        """Handle a scene activated event on the network."""
+        if node.node_id == self.node.node_id:
+            self.scene_activated(scene_id)
+
+    def scene_activated(self, scene_id):
+        """Handle an activated scene for this node."""
+        if self.hass is None:
+            return
+
+        self.hass.bus.fire(EVENT_SCENE_ACTIVATED, {
+            ATTR_ENTITY_ID: self.entity_id,
+            ATTR_NODE_ID: self.node.node_id,
+            ATTR_SCENE_ID: scene_id
+        })
+
+    def central_scene_activated(self, scene_id, scene_data):
+        """Handle an activated central scene for this node."""
+        if self.hass is None:
+            return
+
+        self.hass.bus.fire(EVENT_SCENE_ACTIVATED, {
+            ATTR_ENTITY_ID:   self.entity_id,
+            ATTR_NODE_ID:     self.node_id,
+            ATTR_SCENE_ID:    scene_id,
+            ATTR_SCENE_DATA:  scene_data
+        })
 
     @property
     def state(self):
         """Return the state."""
         if ATTR_READY not in self._attributes:
             return None
-        stage = ''
-        if not self._attributes[ATTR_READY]:
-            # If node is not ready use stage as sub-status.
-            stage = self._attributes[ATTR_QUERY_STAGE]
+
         if self._attributes[ATTR_FAILED]:
-            return sub_status('Dead', stage)
+            return 'dead'
+        if self._attributes[ATTR_QUERY_STAGE] != 'Complete':
+            return 'initializing'
         if not self._attributes[ATTR_AWAKE]:
-            return sub_status('Sleeping', stage)
+            return 'sleeping'
         if self._attributes[ATTR_READY]:
-            return sub_status('Ready', stage)
-        return stage
+            return 'ready'
+
+        return None
 
     @property
     def should_poll(self):
@@ -165,6 +242,7 @@ class ZWaveNodeEntity(ZWaveBaseEntity):
         """Return the device specific state attributes."""
         attrs = {
             ATTR_NODE_ID: self.node_id,
+            ATTR_NODE_NAME: self._name,
             ATTR_MANUFACTURER_NAME: self._manufacturer_name,
             ATTR_PRODUCT_NAME: self._product_name,
         }
@@ -175,3 +253,8 @@ class ZWaveNodeEntity(ZWaveBaseEntity):
             attrs[ATTR_WAKEUP] = self.wakeup_interval
 
         return attrs
+
+    def _compute_unique_id(self):
+        if is_node_parsed(self.node) or self.node.is_ready:
+            return 'node-{}'.format(self.node_id)
+        return None

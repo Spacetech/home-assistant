@@ -19,7 +19,7 @@ from homeassistant.util import Throttle
 from homeassistant.util.dt import now, parse_date
 import homeassistant.helpers.config_validation as cv
 
-REQUIREMENTS = ['upsmychoice==1.0.4']
+REQUIREMENTS = ['upsmychoice==1.0.6']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,8 +38,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-# pylint: disable=unused-argument
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the UPS platform."""
     import upsmychoice
     try:
@@ -51,8 +50,8 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         _LOGGER.exception("Could not connect to UPS My Choice")
         return False
 
-    add_devices([UPSSensor(session, config.get(CONF_NAME),
-                           config.get(CONF_UPDATE_INTERVAL))])
+    add_entities([UPSSensor(session, config.get(CONF_NAME),
+                            config.get(CONF_UPDATE_INTERVAL))], True)
 
 
 class UPSSensor(Entity):
@@ -65,7 +64,6 @@ class UPSSensor(Entity):
         self._attributes = None
         self._state = None
         self.update = Throttle(interval)(self._update)
-        self.update()
 
     @property
     def name(self):
@@ -77,17 +75,26 @@ class UPSSensor(Entity):
         """Return the state of the sensor."""
         return self._state
 
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement of this entity, if any."""
+        return 'packages'
+
     def _update(self):
         """Update device state."""
         import upsmychoice
         status_counts = defaultdict(int)
-        for package in upsmychoice.get_packages(self._session):
-            status = slugify(package['status'])
-            skip = status == STATUS_DELIVERED and \
-                parse_date(package['delivery_date']) < now().date()
-            if skip:
-                continue
-            status_counts[status] += 1
+        try:
+            for package in upsmychoice.get_packages(self._session):
+                status = slugify(package['status'])
+                skip = status == STATUS_DELIVERED and \
+                    parse_date(package['delivery_date']) < now().date()
+                if skip:
+                    continue
+                status_counts[status] += 1
+        except upsmychoice.UPSError:
+            _LOGGER.error('Could not connect to UPS My Choice account')
+
         self._attributes = {
             ATTR_ATTRIBUTION: upsmychoice.ATTRIBUTION
         }

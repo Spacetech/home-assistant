@@ -48,7 +48,7 @@ PLATFORM_SCHEMA = vol.Schema(
 )
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the KWB component."""
     host = config.get(CONF_HOST)
     port = config.get(CONF_PORT)
@@ -77,7 +77,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP,
                          lambda event: easyfire.stop_thread())
 
-    add_devices(sensors)
+    add_entities(sensors)
 
 
 class KWBSensor(Entity):
@@ -105,8 +105,7 @@ class KWBSensor(Entity):
         """Return the state of value."""
         if self._sensor.value is not None and self._sensor.available:
             return self._sensor.value
-        else:
-            return STATE_UNKNOWN
+        return STATE_UNKNOWN
 
     @property
     def unit_of_measurement(self):

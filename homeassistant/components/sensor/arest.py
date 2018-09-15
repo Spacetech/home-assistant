@@ -44,7 +44,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the aREST sensor."""
     resource = config.get(CONF_RESOURCE)
     var_conf = config.get(CONF_MONITORED_VARIABLES)
@@ -102,7 +102,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
                 pin=pinnum, unit_of_measurement=pin.get(
                     CONF_UNIT_OF_MEASUREMENT), renderer=renderer))
 
-    add_devices(dev)
+    add_entities(dev, True)
 
 
 class ArestSensor(Entity):
@@ -119,12 +119,11 @@ class ArestSensor(Entity):
         self._state = STATE_UNKNOWN
         self._unit_of_measurement = unit_of_measurement
         self._renderer = renderer
-        self.update()
 
         if self._pin is not None:
             request = requests.get(
                 '{}/mode/{}/i'.format(self._resource, self._pin), timeout=10)
-            if request.status_code is not 200:
+            if request.status_code != 200:
                 _LOGGER.error("Can't set mode of %s", self._resource)
 
     @property
@@ -159,7 +158,7 @@ class ArestSensor(Entity):
         return self.arest.available
 
 
-class ArestData(object):
+class ArestData:
     """The Class for handling the data retrieval for variables."""
 
     def __init__(self, resource, pin=None):

@@ -42,12 +42,12 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 
 @asyncio.coroutine
-# pylint: disable=unused-argument
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up a MJPEG IP Camera."""
     if discovery_info:
         config = PLATFORM_SCHEMA(discovery_info)
-    async_add_devices([MjpegCamera(hass, config)])
+    async_add_entities([MjpegCamera(hass, config)])
 
 
 def extract_image_from_mjpeg(stream):
@@ -88,8 +88,8 @@ class MjpegCamera(Camera):
         # DigestAuth is not supported
         if self._authentication == HTTP_DIGEST_AUTHENTICATION or \
            self._still_image_url is None:
-            image = yield from self.hass.loop.run_in_executor(
-                None, self.camera_image)
+            image = yield from self.hass.async_add_job(
+                self.camera_image)
             return image
 
         websession = async_get_clientsession(self.hass)
@@ -119,22 +119,23 @@ class MjpegCamera(Camera):
         else:
             req = requests.get(self._mjpeg_url, stream=True, timeout=10)
 
+        # https://github.com/PyCQA/pylint/issues/1437
+        # pylint: disable=no-member
         with closing(req) as response:
             return extract_image_from_mjpeg(response.iter_content(102400))
 
-    @asyncio.coroutine
-    def handle_async_mjpeg_stream(self, request):
+    async def handle_async_mjpeg_stream(self, request):
         """Generate an HTTP MJPEG stream from the camera."""
         # aiohttp don't support DigestAuth -> Fallback
         if self._authentication == HTTP_DIGEST_AUTHENTICATION:
-            yield from super().handle_async_mjpeg_stream(request)
+            await super().handle_async_mjpeg_stream(request)
             return
 
         # connect to stream
         websession = async_get_clientsession(self.hass)
         stream_coro = websession.get(self._mjpeg_url, auth=self._auth)
 
-        yield from async_aiohttp_proxy_web(self.hass, request, stream_coro)
+        return await async_aiohttp_proxy_web(self.hass, request, stream_coro)
 
     @property
     def name(self):

@@ -4,19 +4,21 @@ Interfaces with Alarm.com alarm control panels.
 For more details about this platform, please refer to the documentation at
 https://home-assistant.io/components/alarm_control_panel.alarmdotcom/
 """
-import logging
 import asyncio
+import logging
+import re
+
 import voluptuous as vol
+
 import homeassistant.components.alarm_control_panel as alarm
 from homeassistant.components.alarm_control_panel import PLATFORM_SCHEMA
 from homeassistant.const import (
-    CONF_PASSWORD, CONF_USERNAME, STATE_ALARM_ARMED_AWAY,
-    STATE_ALARM_ARMED_HOME, STATE_ALARM_DISARMED, STATE_UNKNOWN, CONF_CODE,
-    CONF_NAME)
-import homeassistant.helpers.config_validation as cv
+    CONF_CODE, CONF_NAME, CONF_PASSWORD, CONF_USERNAME, STATE_ALARM_ARMED_AWAY,
+    STATE_ALARM_ARMED_HOME, STATE_ALARM_DISARMED, STATE_UNKNOWN)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import homeassistant.helpers.config_validation as cv
 
-REQUIREMENTS = ['pyalarmdotcom==0.3.0']
+REQUIREMENTS = ['pyalarmdotcom==0.3.2']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +33,8 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up a Alarm.com control panel."""
     name = config.get(CONF_NAME)
     code = config.get(CONF_CODE)
@@ -40,11 +43,11 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
 
     alarmdotcom = AlarmDotCom(hass, name, code, username, password)
     yield from alarmdotcom.async_login()
-    async_add_devices([alarmdotcom])
+    async_add_entities([alarmdotcom])
 
 
 class AlarmDotCom(alarm.AlarmControlPanel):
-    """Represent an Alarm.com status."""
+    """Representation of an Alarm.com status."""
 
     def __init__(self, hass, name, code, username, password):
         """Initialize the Alarm.com status."""
@@ -57,10 +60,8 @@ class AlarmDotCom(alarm.AlarmControlPanel):
         self._password = password
         self._websession = async_get_clientsession(self._hass)
         self._state = STATE_UNKNOWN
-        self._alarm = Alarmdotcom(username,
-                                  password,
-                                  self._websession,
-                                  hass.loop)
+        self._alarm = Alarmdotcom(
+            username, password, self._websession, hass.loop)
 
     @asyncio.coroutine
     def async_login(self):
@@ -80,20 +81,30 @@ class AlarmDotCom(alarm.AlarmControlPanel):
 
     @property
     def code_format(self):
-        """One or more characters if code is defined."""
-        return None if self._code is None else '.+'
+        """Return one or more digits/characters."""
+        if self._code is None:
+            return None
+        if isinstance(self._code, str) and re.search('^\\d+$', self._code):
+            return 'Number'
+        return 'Any'
 
     @property
     def state(self):
         """Return the state of the device."""
         if self._alarm.state.lower() == 'disarmed':
             return STATE_ALARM_DISARMED
-        elif self._alarm.state.lower() == 'armed stay':
+        if self._alarm.state.lower() == 'armed stay':
             return STATE_ALARM_ARMED_HOME
-        elif self._alarm.state.lower() == 'armed away':
+        if self._alarm.state.lower() == 'armed away':
             return STATE_ALARM_ARMED_AWAY
-        else:
-            return STATE_UNKNOWN
+        return STATE_UNKNOWN
+
+    @property
+    def device_state_attributes(self):
+        """Return the state attributes."""
+        return {
+            'sensor_status': self._alarm.sensor_status
+        }
 
     @asyncio.coroutine
     def async_alarm_disarm(self, code=None):
@@ -117,5 +128,5 @@ class AlarmDotCom(alarm.AlarmControlPanel):
         """Validate given code."""
         check = self._code is None or code == self._code
         if not check:
-            _LOGGER.warning('Wrong code entered.')
+            _LOGGER.warning("Wrong code entered")
         return check

@@ -32,7 +32,8 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up Hook by getting the access token and list of actions."""
     username = config.get(CONF_USERNAME)
     password = config.get(CONF_PASSWORD)
@@ -70,7 +71,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         _LOGGER.error("Failed getting devices: %s", error)
         return False
 
-    async_add_devices(
+    async_add_entities(
         HookSmartHome(
             hass,
             token,
@@ -122,7 +123,7 @@ class HookSmartHome(SwitchDevice):
         return data['return_value'] == '1'
 
     @asyncio.coroutine
-    def async_turn_on(self):
+    def async_turn_on(self, **kwargs):
         """Turn the device on asynchronously."""
         _LOGGER.debug("Turning on: %s", self._name)
         url = '{}{}{}{}'.format(
@@ -131,7 +132,7 @@ class HookSmartHome(SwitchDevice):
         self._state = success
 
     @asyncio.coroutine
-    def async_turn_off(self):
+    def async_turn_off(self, **kwargs):
         """Turn the device off asynchronously."""
         _LOGGER.debug("Turning off: %s", self._name)
         url = '{}{}{}{}'.format(

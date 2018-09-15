@@ -21,7 +21,7 @@ SENSOR_TYPES = {
 }
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up a Blink sensor."""
     if discovery_info is None:
         return
@@ -35,7 +35,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         devs.append(BlinkSensor(name, 'notifications', index, data))
         index += 1
 
-    add_devices(devs, True)
+    add_entities(devs, True)
 
 
 class BlinkSensor(Entity):
@@ -60,11 +60,6 @@ class BlinkSensor(Entity):
     def state(self):
         """Return the camera's current state."""
         return self._state
-
-    @property
-    def unique_id(self):
-        """Return the unique camera sensor identifier."""
-        return "sensor_{}_{}".format(self._name, self.index)
 
     @property
     def unit_of_measurement(self):

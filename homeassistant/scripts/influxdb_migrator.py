@@ -2,14 +2,14 @@
 
 import argparse
 import sys
-
 from typing import List
 
 
 # Based on code at
 # http://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
-def print_progress(iteration: int, total: int, prefix: str='', suffix: str='',
-                   decimals: int=2, bar_length: int=68) -> None:
+def print_progress(iteration: int, total: int, prefix: str = '',
+                   suffix: str = '', decimals: int = 2,
+                   bar_length: int = 68) -> None:
     """Print progress bar.
 
     Call in a loop to create terminal progress bar
@@ -104,7 +104,7 @@ def run(script_args: List) -> int:
     for index, measurement in enumerate(measurements):
         client.query('''SELECT * INTO {}..:MEASUREMENT FROM '''
                      '"{}" GROUP BY *'.format(old_dbname, measurement))
-        # Print progess
+        # Print progress
         print_progress(index + 1, nb_measurements)
 
     # Delete the database
@@ -119,7 +119,7 @@ def run(script_args: List) -> int:
     point_wt_time = 0
 
     print("Migrating from {} to {}".format(old_dbname, args.dbname))
-    # Walk into measurenebt
+    # Walk into measurement
     for index, measurement in enumerate(measurements):
 
         # Get tag list
@@ -184,7 +184,7 @@ def run(script_args: List) -> int:
             else:
                 # Increment offset
                 offset += args.step
-        # Print progess
+        # Print progress
         print_progress(index + 1, nb_measurements)
 
     # Delete database if needed

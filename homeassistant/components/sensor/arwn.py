@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 
-import homeassistant.components.mqtt as mqtt
+from homeassistant.components import mqtt
 from homeassistant.core import callback
 from homeassistant.const import TEMP_FAHRENHEIT, TEMP_CELSIUS
 from homeassistant.helpers.entity import Entity
@@ -38,6 +38,13 @@ def discover_sensors(topic, payload):
         else:
             unit = TEMP_CELSIUS
         return ArwnSensor(name, 'temp', unit)
+    if domain == "moisture":
+        name = parts[2] + " Moisture"
+        return ArwnSensor(name, 'moisture', unit, "mdi:water-percent")
+    if domain == "rain":
+        if len(parts) >= 3 and parts[2] == "today":
+            return ArwnSensor("Rain Since Midnight", 'since_midnight',
+                              "in", "mdi:water")
     if domain == 'barometer':
         return ArwnSensor('Barometer', 'pressure', unit,
                           "mdi:thermometer-lines")
@@ -52,7 +59,8 @@ def _slug(name):
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up the ARWN platform."""
     @callback
     def async_sensor_event_received(topic, payload, qos):
@@ -90,7 +98,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
                 store[sensor.name] = sensor
                 _LOGGER.debug("Registering new sensor %(name)s => %(event)s",
                               dict(name=sensor.name, event=event))
-                async_add_devices((sensor,), True)
+                async_add_entities((sensor,), True)
             else:
                 store[sensor.name].set_event(event)
 
@@ -116,7 +124,7 @@ class ArwnSensor(Entity):
         """Update the sensor with the most recent event."""
         self.event = {}
         self.event.update(event)
-        self.hass.async_add_job(self.async_update_ha_state())
+        self.async_schedule_update_ha_state()
 
     @property
     def state(self):
@@ -146,7 +154,4 @@ class ArwnSensor(Entity):
     @property
     def icon(self):
         """Return the icon of device based on its type."""
-        if self._icon:
-            return self._icon
-        else:
-            return super().icon
+        return self._icon

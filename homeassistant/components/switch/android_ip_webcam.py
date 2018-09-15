@@ -15,7 +15,8 @@ DEPENDENCIES = ['android_ip_webcam']
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up the IP Webcam switch platform."""
     if discovery_info is None:
         return
@@ -30,7 +31,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
     for setting in switches:
         all_switches.append(IPWebcamSettingsSwitch(name, host, ipcam, setting))
 
-    async_add_devices(all_switches, True)
+    async_add_entities(all_switches, True)
 
 
 class IPWebcamSettingsSwitch(AndroidIPCamEntity, SwitchDevice):
@@ -47,7 +48,7 @@ class IPWebcamSettingsSwitch(AndroidIPCamEntity, SwitchDevice):
 
     @property
     def name(self):
-        """Return the the name of the node."""
+        """Return the name of the node."""
         return self._name
 
     @asyncio.coroutine
@@ -72,7 +73,7 @@ class IPWebcamSettingsSwitch(AndroidIPCamEntity, SwitchDevice):
         else:
             yield from self._ipcam.change_setting(self._setting, True)
         self._state = True
-        self.hass.async_add_job(self.async_update_ha_state())
+        self.async_schedule_update_ha_state()
 
     @asyncio.coroutine
     def async_turn_off(self, **kwargs):
@@ -86,7 +87,7 @@ class IPWebcamSettingsSwitch(AndroidIPCamEntity, SwitchDevice):
         else:
             yield from self._ipcam.change_setting(self._setting, False)
         self._state = False
-        self.hass.async_add_job(self.async_update_ha_state())
+        self.async_schedule_update_ha_state()
 
     @property
     def icon(self):

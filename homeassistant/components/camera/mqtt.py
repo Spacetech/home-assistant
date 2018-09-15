@@ -11,7 +11,7 @@ import logging
 import voluptuous as vol
 
 from homeassistant.core import callback
-import homeassistant.components.mqtt as mqtt
+from homeassistant.components import mqtt
 from homeassistant.const import CONF_NAME
 from homeassistant.components.camera import Camera, PLATFORM_SCHEMA
 from homeassistant.helpers import config_validation as cv
@@ -19,7 +19,6 @@ from homeassistant.helpers import config_validation as cv
 _LOGGER = logging.getLogger(__name__)
 
 CONF_TOPIC = 'topic'
-
 DEFAULT_NAME = 'MQTT Camera'
 
 DEPENDENCIES = ['mqtt']
@@ -31,11 +30,16 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up the MQTT Camera."""
-    topic = config[CONF_TOPIC]
+    if discovery_info is not None:
+        config = PLATFORM_SCHEMA(discovery_info)
 
-    async_add_devices([MqttCamera(config[CONF_NAME], topic)])
+    async_add_entities([MqttCamera(
+        config.get(CONF_NAME),
+        config.get(CONF_TOPIC)
+    )])
 
 
 class MqttCamera(Camera):
@@ -60,11 +64,9 @@ class MqttCamera(Camera):
         """Return the name of this camera."""
         return self._name
 
+    @asyncio.coroutine
     def async_added_to_hass(self):
-        """Subscribe MQTT events.
-
-        This method must be run in the event loop and returns a coroutine.
-        """
+        """Subscribe MQTT events."""
         @callback
         def message_received(topic, payload, qos):
             """Handle new MQTT messages."""

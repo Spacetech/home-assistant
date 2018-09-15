@@ -6,18 +6,21 @@ https://home-assistant.io/components/alarm_control_panel.mqtt/
 """
 import asyncio
 import logging
+import re
 
 import voluptuous as vol
 
 from homeassistant.core import callback
 import homeassistant.components.alarm_control_panel as alarm
-import homeassistant.components.mqtt as mqtt
+from homeassistant.components import mqtt
 from homeassistant.const import (
     STATE_ALARM_ARMED_AWAY, STATE_ALARM_ARMED_HOME, STATE_ALARM_DISARMED,
     STATE_ALARM_PENDING, STATE_ALARM_TRIGGERED, STATE_UNKNOWN,
     CONF_NAME, CONF_CODE)
 from homeassistant.components.mqtt import (
-    CONF_STATE_TOPIC, CONF_COMMAND_TOPIC, CONF_QOS)
+    CONF_AVAILABILITY_TOPIC, CONF_STATE_TOPIC, CONF_COMMAND_TOPIC,
+    CONF_PAYLOAD_AVAILABLE, CONF_PAYLOAD_NOT_AVAILABLE, CONF_QOS,
+    CONF_RETAIN, MqttAvailability)
 import homeassistant.helpers.config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,44 +43,56 @@ PLATFORM_SCHEMA = mqtt.MQTT_BASE_PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_PAYLOAD_ARM_AWAY, default=DEFAULT_ARM_AWAY): cv.string,
     vol.Optional(CONF_PAYLOAD_ARM_HOME, default=DEFAULT_ARM_HOME): cv.string,
     vol.Optional(CONF_PAYLOAD_DISARM, default=DEFAULT_DISARM): cv.string,
-})
+}).extend(mqtt.MQTT_AVAILABILITY_SCHEMA.schema)
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Set up the MQTT Alarm Control Panel platform."""
-    async_add_devices([MqttAlarm(
+    if discovery_info is not None:
+        config = PLATFORM_SCHEMA(discovery_info)
+
+    async_add_entities([MqttAlarm(
         config.get(CONF_NAME),
         config.get(CONF_STATE_TOPIC),
         config.get(CONF_COMMAND_TOPIC),
         config.get(CONF_QOS),
+        config.get(CONF_RETAIN),
         config.get(CONF_PAYLOAD_DISARM),
         config.get(CONF_PAYLOAD_ARM_HOME),
         config.get(CONF_PAYLOAD_ARM_AWAY),
-        config.get(CONF_CODE))])
+        config.get(CONF_CODE),
+        config.get(CONF_AVAILABILITY_TOPIC),
+        config.get(CONF_PAYLOAD_AVAILABLE),
+        config.get(CONF_PAYLOAD_NOT_AVAILABLE))])
 
 
-class MqttAlarm(alarm.AlarmControlPanel):
+class MqttAlarm(MqttAvailability, alarm.AlarmControlPanel):
     """Representation of a MQTT alarm status."""
 
-    def __init__(self, name, state_topic, command_topic, qos, payload_disarm,
-                 payload_arm_home, payload_arm_away, code):
+    def __init__(self, name, state_topic, command_topic, qos, retain,
+                 payload_disarm, payload_arm_home, payload_arm_away, code,
+                 availability_topic, payload_available, payload_not_available):
         """Init the MQTT Alarm Control Panel."""
+        super().__init__(availability_topic, qos, payload_available,
+                         payload_not_available)
         self._state = STATE_UNKNOWN
         self._name = name
         self._state_topic = state_topic
         self._command_topic = command_topic
         self._qos = qos
+        self._retain = retain
         self._payload_disarm = payload_disarm
         self._payload_arm_home = payload_arm_home
         self._payload_arm_away = payload_arm_away
         self._code = code
 
+    @asyncio.coroutine
     def async_added_to_hass(self):
-        """Subscribe mqtt events.
+        """Subscribe mqtt events."""
+        yield from super().async_added_to_hass()
 
-        This method must be run in the event loop and returns a coroutine.
-        """
         @callback
         def message_received(topic, payload, qos):
             """Run when new MQTT message has been received."""
@@ -87,9 +102,9 @@ class MqttAlarm(alarm.AlarmControlPanel):
                 _LOGGER.warning("Received unexpected payload: %s", payload)
                 return
             self._state = payload
-            self.hass.async_add_job(self.async_update_ha_state())
+            self.async_schedule_update_ha_state()
 
-        return mqtt.async_subscribe(
+        yield from mqtt.async_subscribe(
             self.hass, self._state_topic, message_received, self._qos)
 
     @property
@@ -109,8 +124,12 @@ class MqttAlarm(alarm.AlarmControlPanel):
 
     @property
     def code_format(self):
-        """One or more characters if code is defined."""
-        return None if self._code is None else '.+'
+        """Return one or more digits/characters."""
+        if self._code is None:
+            return None
+        if isinstance(self._code, str) and re.search('^\\d+$', self._code):
+            return 'Number'
+        return 'Any'
 
     @asyncio.coroutine
     def async_alarm_disarm(self, code=None):
@@ -121,7 +140,8 @@ class MqttAlarm(alarm.AlarmControlPanel):
         if not self._validate_code(code, 'disarming'):
             return
         mqtt.async_publish(
-            self.hass, self._command_topic, self._payload_disarm, self._qos)
+            self.hass, self._command_topic, self._payload_disarm, self._qos,
+            self._retain)
 
     @asyncio.coroutine
     def async_alarm_arm_home(self, code=None):
@@ -132,7 +152,8 @@ class MqttAlarm(alarm.AlarmControlPanel):
         if not self._validate_code(code, 'arming home'):
             return
         mqtt.async_publish(
-            self.hass, self._command_topic, self._payload_arm_home, self._qos)
+            self.hass, self._command_topic, self._payload_arm_home, self._qos,
+            self._retain)
 
     @asyncio.coroutine
     def async_alarm_arm_away(self, code=None):
@@ -143,7 +164,8 @@ class MqttAlarm(alarm.AlarmControlPanel):
         if not self._validate_code(code, 'arming away'):
             return
         mqtt.async_publish(
-            self.hass, self._command_topic, self._payload_arm_away, self._qos)
+            self.hass, self._command_topic, self._payload_arm_away, self._qos,
+            self._retain)
 
     def _validate_code(self, code, state):
         """Validate given code."""

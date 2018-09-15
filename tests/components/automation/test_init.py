@@ -14,7 +14,7 @@ import homeassistant.util.dt as dt_util
 
 from tests.common import (
     assert_setup_component, get_test_home_assistant, fire_time_changed,
-    mock_service, mock_restore_cache)
+    mock_service, async_mock_service, mock_restore_cache)
 
 
 # pylint: disable=invalid-name
@@ -22,7 +22,7 @@ class TestAutomation(unittest.TestCase):
     """Test the event automation."""
 
     def setUp(self):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
         self.calls = mock_service(self.hass, 'test', 'automation')
 
@@ -32,7 +32,7 @@ class TestAutomation(unittest.TestCase):
 
     def test_service_data_not_a_dict(self):
         """Test service data not dict."""
-        with assert_setup_component(0):
+        with assert_setup_component(0, automation.DOMAIN):
             assert setup_component(self.hass, automation.DOMAIN, {
                 automation.DOMAIN: {
                     'trigger': {
@@ -207,6 +207,7 @@ class TestAutomation(unittest.TestCase):
         """Test triggers."""
         assert setup_component(self.hass, automation.DOMAIN, {
             automation.DOMAIN: {
+                'alias': 'test',
                 'trigger': [
                     {
                         'platform': 'event',
@@ -228,7 +229,9 @@ class TestAutomation(unittest.TestCase):
         self.hass.block_till_done()
         assert len(self.calls) == 0
 
-        self.hass.services.call('automation', 'trigger', blocking=True)
+        self.hass.services.call('automation', 'trigger',
+                                {'entity_id': 'automation.test'},
+                                blocking=True)
         self.hass.block_till_done()
         assert len(self.calls) == 1
 
@@ -390,23 +393,7 @@ class TestAutomation(unittest.TestCase):
         self.hass.block_till_done()
         assert automation.is_on(self.hass, entity_id)
 
-    @patch('homeassistant.config.load_yaml_config_file', autospec=True,
-           return_value={
-               automation.DOMAIN: {
-                   'alias': 'bye',
-                   'trigger': {
-                       'platform': 'event',
-                       'event_type': 'test_event2',
-                   },
-                   'action': {
-                       'service': 'test.automation',
-                       'data_template': {
-                           'event': '{{ trigger.event.event_type }}'
-                       }
-                   }
-               }
-           })
-    def test_reload_config_service(self, mock_load_yaml):
+    def test_reload_config_service(self):
         """Test the reload config service."""
         assert setup_component(self.hass, automation.DOMAIN, {
             automation.DOMAIN: {
@@ -435,10 +422,27 @@ class TestAutomation(unittest.TestCase):
         assert len(self.calls) == 1
         assert self.calls[0].data.get('event') == 'test_event'
 
-        automation.reload(self.hass)
-        self.hass.block_till_done()
-        # De-flake ?!
-        self.hass.block_till_done()
+        with patch('homeassistant.config.load_yaml_config_file', autospec=True,
+                   return_value={
+                    automation.DOMAIN: {
+                       'alias': 'bye',
+                       'trigger': {
+                           'platform': 'event',
+                           'event_type': 'test_event2',
+                       },
+                       'action': {
+                           'service': 'test.automation',
+                           'data_template': {
+                               'event': '{{ trigger.event.event_type }}'
+                           }
+                       }
+                    }}):
+            with patch('homeassistant.config.find_config_file',
+                       return_value=''):
+                automation.reload(self.hass)
+                self.hass.block_till_done()
+                # De-flake ?!
+                self.hass.block_till_done()
 
         assert self.hass.states.get('automation.hello') is None
         assert self.hass.states.get('automation.bye') is not None
@@ -455,11 +459,9 @@ class TestAutomation(unittest.TestCase):
         assert len(self.calls) == 2
         assert self.calls[1].data.get('event') == 'test_event2'
 
-    @patch('homeassistant.config.load_yaml_config_file', autospec=True,
-           return_value={automation.DOMAIN: 'not valid'})
-    def test_reload_config_when_invalid_config(self, mock_load_yaml):
+    def test_reload_config_when_invalid_config(self):
         """Test the reload config service handling invalid config."""
-        with assert_setup_component(1):
+        with assert_setup_component(1, automation.DOMAIN):
             assert setup_component(self.hass, automation.DOMAIN, {
                 automation.DOMAIN: {
                     'alias': 'hello',
@@ -483,8 +485,12 @@ class TestAutomation(unittest.TestCase):
         assert len(self.calls) == 1
         assert self.calls[0].data.get('event') == 'test_event'
 
-        automation.reload(self.hass)
-        self.hass.block_till_done()
+        with patch('homeassistant.config.load_yaml_config_file', autospec=True,
+                   return_value={automation.DOMAIN: 'not valid'}):
+            with patch('homeassistant.config.find_config_file',
+                       return_value=''):
+                automation.reload(self.hass)
+                self.hass.block_till_done()
 
         assert self.hass.states.get('automation.hello') is None
 
@@ -519,8 +525,10 @@ class TestAutomation(unittest.TestCase):
 
         with patch('homeassistant.config.load_yaml_config_file',
                    side_effect=HomeAssistantError('bla')):
-            automation.reload(self.hass)
-            self.hass.block_till_done()
+            with patch('homeassistant.config.find_config_file',
+                       return_value=''):
+                automation.reload(self.hass)
+                self.hass.block_till_done()
 
         assert self.hass.states.get('automation.hello') is not None
 
@@ -566,7 +574,7 @@ def test_automation_restore_state(hass):
     assert state.state == STATE_OFF
     assert state.attributes.get('last_triggered') == time
 
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
 
     assert automation.is_on(hass, 'automation.bye') is False
 
@@ -585,7 +593,7 @@ def test_automation_restore_state(hass):
 @asyncio.coroutine
 def test_initial_value_off(hass):
     """Test initial value off."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
 
     res = yield from async_setup_component(hass, automation.DOMAIN, {
         automation.DOMAIN: {
@@ -612,7 +620,7 @@ def test_initial_value_off(hass):
 @asyncio.coroutine
 def test_initial_value_on(hass):
     """Test initial value on."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
 
     res = yield from async_setup_component(hass, automation.DOMAIN, {
         automation.DOMAIN: {
@@ -639,7 +647,7 @@ def test_initial_value_on(hass):
 @asyncio.coroutine
 def test_initial_value_off_but_restore_on(hass):
     """Test initial value off and restored state is turned on."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
     mock_restore_cache(hass, (
         State('automation.hello', STATE_ON),
     ))
@@ -669,7 +677,7 @@ def test_initial_value_off_but_restore_on(hass):
 @asyncio.coroutine
 def test_initial_value_on_but_restore_off(hass):
     """Test initial value on and restored state is turned off."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
     mock_restore_cache(hass, (
         State('automation.hello', STATE_OFF),
     ))
@@ -699,7 +707,7 @@ def test_initial_value_on_but_restore_off(hass):
 @asyncio.coroutine
 def test_no_initial_value_and_restore_off(hass):
     """Test initial value off and restored state is turned on."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
     mock_restore_cache(hass, (
         State('automation.hello', STATE_OFF),
     ))
@@ -728,7 +736,7 @@ def test_no_initial_value_and_restore_off(hass):
 @asyncio.coroutine
 def test_automation_is_on_if_no_initial_state_or_restore(hass):
     """Test initial value is on when no initial state or restored state."""
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
 
     res = yield from async_setup_component(hass, automation.DOMAIN, {
         automation.DOMAIN: {
@@ -755,7 +763,7 @@ def test_automation_is_on_if_no_initial_state_or_restore(hass):
 def test_automation_not_trigger_on_bootstrap(hass):
     """Test if automation is not trigger on bootstrap."""
     hass.state = CoreState.not_running
-    calls = mock_service(hass, 'test', 'automation')
+    calls = async_mock_service(hass, 'test', 'automation')
 
     res = yield from async_setup_component(hass, automation.DOMAIN, {
         automation.DOMAIN: {

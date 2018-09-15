@@ -6,7 +6,6 @@ https://home-assistant.io/components/alarm_control_panel.envisalink/
 """
 import asyncio
 import logging
-import os
 
 import voluptuous as vol
 
@@ -14,7 +13,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 import homeassistant.components.alarm_control_panel as alarm
 import homeassistant.helpers.config_validation as cv
-from homeassistant.config import load_yaml_config_file
 from homeassistant.components.envisalink import (
     DATA_EVL, EnvisalinkDevice, PARTITION_SCHEMA, CONF_CODE, CONF_PANIC,
     CONF_PARTITIONNAME, SIGNAL_KEYPAD_UPDATE, SIGNAL_PARTITION_UPDATE)
@@ -35,7 +33,8 @@ ALARM_KEYPRESS_SCHEMA = vol.Schema({
 
 
 @asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+def async_setup_platform(hass, config, async_add_entities,
+                         discovery_info=None):
     """Perform the setup for Envisalink alarm panels."""
     configured_partitions = discovery_info['partitions']
     code = discovery_info[CONF_CODE]
@@ -55,7 +54,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         )
         devices.append(device)
 
-    async_add_devices(devices)
+    async_add_entities(devices)
 
     @callback
     def alarm_keypress_handler(service):
@@ -69,14 +68,9 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         for device in target_devices:
             device.async_alarm_keypress(keypress)
 
-    # Register Envisalink specific services
-    descriptions = yield from hass.loop.run_in_executor(
-        None, load_yaml_config_file, os.path.join(
-            os.path.dirname(__file__), 'services.yaml'))
-
     hass.services.async_register(
         alarm.DOMAIN, SERVICE_ALARM_KEYPRESS, alarm_keypress_handler,
-        descriptions.get(SERVICE_ALARM_KEYPRESS), schema=ALARM_KEYPRESS_SCHEMA)
+        schema=ALARM_KEYPRESS_SCHEMA)
 
     return True
 
@@ -106,15 +100,14 @@ class EnvisalinkAlarm(EnvisalinkDevice, alarm.AlarmControlPanel):
     def _update_callback(self, partition):
         """Update Home Assistant state, if needed."""
         if partition is None or int(partition) == self._partition_number:
-            self.hass.async_add_job(self.async_update_ha_state())
+            self.async_schedule_update_ha_state()
 
     @property
     def code_format(self):
         """Regex for code format or None if no code is required."""
         if self._code:
             return None
-        else:
-            return '^\\d{4,6}$'
+        return 'Number'
 
     @property
     def state(self):

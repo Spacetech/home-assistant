@@ -21,7 +21,7 @@ class TestLiteJetLight(unittest.TestCase):
 
     @mock.patch('pylitejet.LiteJet')
     def setup_method(self, method, mock_pylitejet):
-        """Setup things to be run when tests are started."""
+        """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
         self.hass.start()
 
@@ -156,7 +156,7 @@ class TestLiteJetLight(unittest.TestCase):
 
         # (Requesting the level is not strictly needed with a deactivated
         # event but the implementation happens to do it. This could be
-        # changed to a assert_not_called in the future.)
+        # changed to an assert_not_called in the future.)
         self.mock_lj.get_load_level.assert_called_with(
             ENTITY_OTHER_LIGHT_NUMBER)
 

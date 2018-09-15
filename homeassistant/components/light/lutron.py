@@ -11,20 +11,19 @@ from homeassistant.components.light import (
 from homeassistant.components.lutron import (
     LutronDevice, LUTRON_DEVICES, LUTRON_CONTROLLER)
 
-DEPENDENCIES = ['lutron']
-
 _LOGGER = logging.getLogger(__name__)
 
+DEPENDENCIES = ['lutron']
 
-# pylint: disable=unused-argument
-def setup_platform(hass, config, add_devices, discovery_info=None):
-    """Set up Lutron lights."""
+
+def setup_platform(hass, config, add_entities, discovery_info=None):
+    """Set up the Lutron lights."""
     devs = []
     for (area_name, device) in hass.data[LUTRON_DEVICES]['light']:
         dev = LutronLight(area_name, device, hass.data[LUTRON_CONTROLLER])
         devs.append(dev)
 
-    add_devices(devs, True)
+    add_entities(devs, True)
     return True
 
 

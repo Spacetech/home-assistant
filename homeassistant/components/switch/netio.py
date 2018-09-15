@@ -49,7 +49,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Netio platform."""
     from pynetio import Netio
 
@@ -73,7 +73,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
             DEVICES[host].netio, key, config[CONF_OUTLETS][key])
         DEVICES[host].entities.append(switch)
 
-    add_devices(DEVICES[host].entities)
+    add_entities(DEVICES[host].entities)
 
     hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP, dispose)
     return True
@@ -95,7 +95,7 @@ class NetioApiView(HomeAssistantView):
     def get(self, request, host):
         """Request handler."""
         hass = request.app['hass']
-        data = request.GET
+        data = request.query
         states, consumptions, cumulated_consumptions, start_dates = \
             [], [], [], []
 
@@ -141,11 +141,11 @@ class NetioSwitch(SwitchDevice):
         """Return true if entity is available."""
         return not hasattr(self, 'telnet')
 
-    def turn_on(self):
+    def turn_on(self, **kwargs):
         """Turn switch on."""
         self._set(True)
 
-    def turn_off(self):
+    def turn_off(self, **kwargs):
         """Turn switch off."""
         self._set(False)
 

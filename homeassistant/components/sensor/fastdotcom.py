@@ -6,16 +6,17 @@ https://home-assistant.io/components/sensor.fastdotcom/
 """
 import asyncio
 import logging
+
 import voluptuous as vol
 
-import homeassistant.util.dt as dt_util
+from homeassistant.components.sensor import DOMAIN, PLATFORM_SCHEMA
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.sensor import (DOMAIN, PLATFORM_SCHEMA)
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import track_time_change
 from homeassistant.helpers.restore_state import async_get_last_state
+import homeassistant.util.dt as dt_util
 
-REQUIREMENTS = ['fastdotcom==0.0.1']
+REQUIREMENTS = ['fastdotcom==0.0.3']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ CONF_MINUTE = 'minute'
 CONF_HOUR = 'hour'
 CONF_DAY = 'day'
 CONF_MANUAL = 'manual'
+
+ICON = 'mdi:speedometer'
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SECOND, default=[0]):
@@ -38,11 +41,11 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Fast.com sensor."""
     data = SpeedtestData(hass, config)
     sensor = SpeedtestSensor(data)
-    add_devices([sensor])
+    add_entities([sensor])
 
     def update(call=None):
         """Update service for manual updates."""
@@ -93,8 +96,13 @@ class SpeedtestSensor(Entity):
             return
         self._state = state.state
 
+    @property
+    def icon(self):
+        """Return icon."""
+        return ICON
 
-class SpeedtestData(object):
+
+class SpeedtestData:
     """Get the latest data from fast.com."""
 
     def __init__(self, hass, config):
